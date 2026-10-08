@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A股半年报 RAG · 语义地图与问答</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --text:#1a1d21; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#eff4ff; --ok:#059669; --warn:#b45309;
+    --g0:#2a78d6; --g1:#eb6834; --g2:#1baf7a;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;}
+  header{position:sticky;top:0;z-index:30;background:var(--card);border-bottom:1px solid var(--line);
+    padding:12px 20px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.2px}
+  header .meta{color:var(--muted);font-size:12.5px}
+  header .rule{margin-left:auto;font-size:12.5px}
+  header a{color:var(--accent);text-decoration:none}
+  header a:hover{text-decoration:underline}
+  main{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:16px;
+    max-width:1560px;margin:0 auto;padding:16px 20px 40px;align-items:start}
+  @media (max-width:1180px){main{grid-template-columns:1fr}}
+  .col{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .card > h2{margin:0;padding:11px 16px;border-bottom:1px solid var(--line);font-size:13px;
+    font-weight:600;color:var(--muted);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .card > h2 .sp{margin-left:auto}
+  .pad{padding:14px 16px}
+
+  /* ---------------- 地图 ---------------- */
+  .bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);
+    background:#fbfcfd}
+  .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{border:0;background:#fff;color:#374151;font:inherit;font-size:12.5px;font-weight:600;
+    padding:6px 12px;cursor:pointer}
+  .seg button + button{border-left:1px solid var(--line)}
+  .seg button.on{background:var(--accent);color:#fff}
+  .bar .plain{border:1px solid var(--line);background:#fff;color:#4b5563;font:inherit;font-size:12.5px;
+    padding:6px 11px;border-radius:8px;cursor:pointer}
+  .bar .plain:hover{border-color:#c8d4e8}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:#374151}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+  .legend span.cnt{color:var(--muted);font-family:var(--mono);font-size:11.5px}
+  .wrap{position:relative;background:#fff}
+  #map{display:block;width:100%;height:min(56vh,520px);cursor:crosshair;touch-action:none}
+  .tip{position:absolute;pointer-events:none;display:none;max-width:330px;background:#1a1d21;color:#fff;
+    font-size:11.5px;line-height:1.5;padding:6px 9px;border-radius:6px;z-index:5}
+  .tip b{color:#fff}
+  .tip .m{color:#c9ced6}
+  .mapfoot{padding:9px 14px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);background:#fbfcfd}
+  .mapfoot b{color:#374151;font-weight:600}
+  .mapfoot .warn{color:var(--warn)}
+
+  /* ---------------- 语料信息 ---------------- */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:1px;background:var(--line)}
+  .kpi{background:#fff;padding:10px 12px}
+  .kpi b{display:block;font-size:19px;font-weight:650;font-family:var(--mono);letter-spacing:-.3px}
+  .kpi span{font-size:11.5px;color:var(--muted)}
+  .obs{margin:12px 16px;padding:10px 12px;background:var(--accent-soft);border:1px solid #d5e2ff;
+    border-radius:8px;font-size:12.5px;line-height:1.62;color:#1e3a8a}
+  .obs b{font-weight:650}
+  .line{font-size:12.5px;color:#374151;padding:3px 16px}
+  .line b{font-weight:650}
+  .line code{font-family:var(--mono);font-size:11.5px;background:#f1f3f6;padding:1px 5px;border-radius:4px}
+  table.co{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:12px}
+  table.co th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;
+    border-bottom:1px solid var(--line);padding:6px 8px;background:#fbfcfd}
+  table.co td{border-bottom:1px solid #f1f3f6;padding:6px 8px}
+  table.co tr.co-row{cursor:pointer}
+  table.co tr.co-row:hover td{background:#f7f9fc}
+  table.co tr.co-row.on td{background:var(--accent-soft)}
+  table.co td.num{font-family:var(--mono);text-align:right;color:#4b5563}
+  .secs{display:none}
+  tr.co-row.on + tr.secs{display:table-row}
+  tr.secs td{background:#fcfdfe;color:var(--muted);font-size:11.5px;line-height:1.6}
+  .secs .s{font-family:var(--mono);font-size:11px;color:#6b7280}
+
+  /* ---------------- 提问 ---------------- */
+  form.ask{padding:12px 16px;display:flex;gap:10px;align-items:flex-end}
+  textarea{flex:1;resize:vertical;min-height:52px;max-height:170px;padding:11px 12px;font:inherit;
+    border:1px solid var(--line);border-radius:8px;outline:none;background:#fbfcfd}
+  textarea:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px #e6efff}
+  button.go{border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:600;
+    padding:11px 22px;cursor:pointer}
+  button.go:disabled{background:#9db8ea;cursor:not-allowed}
+  .examples{display:flex;gap:7px;flex-wrap:wrap;padding:0 16px 12px}
+  .examples button{border:1px solid var(--line);background:#fff;color:#374151;font:inherit;font-size:12px;
+    padding:4px 9px;border-radius:14px;cursor:pointer}
+  .examples button:hover{border-color:var(--accent);color:var(--accent)}
+  #answer{padding:2px 16px 14px;font-size:14.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+  #answer p{margin:.45em 0}
+  #answer ul,#answer ol{margin:.45em 0;padding-left:1.5em}
+  #answer strong{font-weight:650}
+  #answer h4{margin:.7em 0 .3em;font-size:14px;color:var(--accent)}
+  .cite{display:inline;font-family:var(--mono);font-size:11.5px;color:var(--accent);
+    background:var(--accent-soft);border:1px solid #d5e2ff;border-radius:4px;
+    padding:1px 5px;margin:0 2px;cursor:pointer;white-space:nowrap;vertical-align:1px}
+  .cite:hover{background:#dfeaff}
+  .cite.on{background:#dbeafe;border-color:var(--accent);box-shadow:0 0 0 2px #c7dbff}
+  .caret:after{content:"▍";color:var(--accent);animation:bl 1s steps(2) infinite}
+  @keyframes bl{50%{opacity:0}}
+  .who{display:flex;gap:9px;margin:12px 0 4px}
+  .who .tag{flex:0 0 auto;font-size:11.5px;font-weight:600;color:#fff;background:var(--accent);
+    border-radius:6px;padding:2px 7px;height:fit-content}
+  .who .t{font-weight:600}
+  .err{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:13.5px}
+  .help{color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:11px 13px;
+    font-size:13px;line-height:1.65}
+  .help code,.help a{font-family:var(--mono);font-size:12px}
+  .help a{font-family:inherit;color:var(--accent);font-weight:600}
+  .hint{color:var(--muted);font-size:12px}
+
+  /* ---------------- 召回卡片 ---------------- */
+  #hits{padding:10px 12px;display:flex;flex-direction:column;gap:9px;max-height:min(70vh,760px);overflow:auto}
+  .hit{border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:#fcfdfe}
+  .hit.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 2px #dbe8ff}
+  .hit .r1{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .badge{font-size:10.5px;font-weight:700;color:#fff;background:var(--accent);border-radius:4px;padding:1px 6px}
+  .badge.t{background:var(--warn)}
+  .hit .co{font-weight:650;font-size:13.5px}
+  .hit .cd{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .hit .sec{font-size:12px;color:#374151;margin-top:3px}
+  .hit .pg{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+  .scores{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+  .sc{font-family:var(--mono);font-size:10.5px;border-radius:4px;padding:1px 5px;background:#f1f3f6;color:#4b5563}
+  .sc.v{background:#eef6ff;color:#1d4ed8}
+  .sc.b{background:#fef6ec;color:#9a5b0b}
+  .sc.r{background:#eefaf3;color:#047857}
+  .acts{display:flex;gap:7px;margin-top:7px;flex-wrap:wrap}
+  .acts button{border:1px solid var(--line);background:#fff;color:#4b5563;font:inherit;font-size:11.5px;
+    padding:3px 8px;border-radius:6px;cursor:pointer}
+  .acts button:hover{border-color:var(--accent);color:var(--accent)}
+  .acts button:disabled{color:#aab2bd;cursor:not-allowed}
+  .ex{display:none;margin-top:8px;border-top:1px dashed var(--line);padding-top:8px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.6;white-space:pre-wrap;
+    max-height:300px;overflow:auto;color:#374151;background:#fafbfc;border-radius:6px;padding:8px}
+  .hit.on .ex{display:block}
+  .empty{color:var(--muted);text-align:center;padding:34px 16px;font-size:13.5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>A股半年报 RAG · 语义地图与问答</h1>
+  <div class="meta" id="meta">加载中…</div>
+  <div class="rule"><a href="./index.html">问答页（简版）→</a></div>
+</header>
+
+<main>
+  <div class="col">
+    <section class="card">
+      <h2>财报语义地图<span class="sp" id="mapcount"></span></h2>
+      <div class="bar">
+        <div class="seg">
+          <button id="vRaw" class="on">召回空间（原始向量）</button>
+          <button id="vRes">语义视角（去掉公司均值）</button>
+        </div>
+        <button class="plain" id="reset">重置视图</button>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="wrap">
+        <canvas id="map"></canvas>
+        <div class="tip" id="tip"></div>
+      </div>
+      <div class="mapfoot" id="mapfoot">地图加载中…</div>
+    </section>
+
+    <section class="card" id="pickCard" style="display:none">
+      <h2>地图上点选的块<span class="sp"><button class="plain" id="pickClose">关闭</button></span></h2>
+      <div class="pad" id="pickBody"></div>
+    </section>
+
+    <section class="card">
+      <h2>语料基本信息</h2>
+      <div class="kpis" id="kpis"></div>
+      <div class="obs" id="obs"></div>
+      <div class="line" id="line1"></div>
+      <div class="line" id="line2"></div>
+      <div class="line" id="line3"></div>
+      <table class="co">
+        <thead><tr>
+          <th>公司</th><th style="text-align:right">代码</th>
+          <th style="text-align:right">页数</th><th style="text-align:right">块数</th>
+          <th style="text-align:right">章节</th>
+        </tr></thead>
+        <tbody id="coBody"></tbody>
+      </table>
+      <div class="pad hint">点某一行可在左侧地图上高亮这家公司的块（再点一次取消）。</div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h2>提问<span class="sp hint" id="qsrc"></span></h2>
+      <form class="ask" id="f">
+        <textarea id="q" placeholder="输入问题，Enter 发送（Shift+Enter 换行）"></textarea>
+        <button class="go" id="btn" type="submit">提问</button>
+      </form>
+      <div class="examples" id="ex"></div>
+      <div id="answer"></div>
+    </section>
+
+    <section class="card">
+      <h2>本次召回的相关原文<span class="sp" id="hitsrc"></span></h2>
+      <div id="hits"><div class="empty">提问后在此显示召回的块原文</div></div>
+    </section>
+  </div>
+</main>
+
+<script src="viewer_meta.js"></script>
+<script>
+'use strict';
+/* 语义地图 + 问答。
+   数据来自 viewer_meta.js（构建产物，经典脚本的全局变量——file:// 下 ES module 与
+   fetch('./x.json') 都会被拒）。块原文在 viewer_chunks.js 里，约 6MB，页面按需动态加载。
+   提问打的是本地服务的 /api/ask；密钥只在服务端环境变量里，浏览器拿不到任何凭据。 */
+
+const M = window.VIEWER_META;
+
+var N = 0;                    // 块数
+var CV, CTX, WRAP, TIP, DPR = 1, W = 0, H = 0;
+var view = 'raw';             // 'raw' = xyRaw（检索真实空间） | 'res' = 语义视角
+var K0 = 1;                   // 初始适配缩放，用作手柄半径的基准
+var cam = {k: 1, tx: 0, ty: 0};
+var SX = null, SY = null;     // 每帧的屏幕坐标缓存（拾取用）
+var hits = [];                // 本次召回的 10 块（含 global_index）
+var picked = -1;              // 地图上点选的块号
+var focusCo = -1;             // 高亮的公司下标
+var pulseUntil = 0, pulseAt = -1;
+var CHUNKS = null, chunksReq = null;
+
+// ---------------------------------------------------------------- 工具
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s)
+  .replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pct = v => (v == null ? '—' : (v * 100).toFixed(1) + '%');
+
+/* 引用串现场拼：公司·报告期·章节·页码（与 chunks.jsonl 里的 citation 同格式）。
+   meta 里不存 citation，省一份重复数据。 */
+function companyOf(i){
+  const r = M.compRanges;
+  if (!r) return (M.company || [])[i] ? (M.companies || []).findIndex(c => c.company === M.company[i]) : -1;
+  let lo = 0, hi = r.length - 1, ans = -1;
+  while (lo <= hi){
+    const m = (lo + hi) >> 1;
+    if (r[m][0] <= i){ ans = m; lo = m + 1; } else hi = m - 1;
+  }
+  if (ans < 0) return -1;
+  return (i < r[ans][0] + r[ans][1]) ? ans : -1;
+}
+function pagesOf(i){
+  const a = M.startPage[i], b = M.endPage[i];
+  if (a == null) return 'p?';
+  return (a === b || b == null) ? 'p' + a : 'p' + a + '-' + b;
+}
+function sectionOf(i){ return M.sectionNames[M.sectionIdx[i]] || ''; }
+function citationOf(i){
+  const ci = companyOf(i), co = (M.companies || [])[ci] || {};
+  return (co.company || '') + '·' + (co.period || '') + '·' + sectionOf(i) + '·' + pagesOf(i);
+}
+function snippetOf(i){ return M.snippet ? M.snippet[i] : ''; }
+
+function loadChunks(){
+  if (CHUNKS) return Promise.resolve(CHUNKS);
+  if (chunksReq) return chunksReq;
+  chunksReq = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'viewer_chunks.js';
+    s.onload = () => {
+      CHUNKS = window.VIEWER_CHUNKS;
+      CHUNKS ? res(CHUNKS)
+             : rej(new Error('viewer_chunks.js 里没有 VIEWER_CHUNKS'));
+    };
+    s.onerror = () => rej(new Error('viewer_chunks.js 加载失败（文件在 web/ 目录里吗？）'));
+    document.head.appendChild(s);
+    // file:// 下脚本加载失败时 onerror 不一定触发，加个看门狗兜底
+    setTimeout(() => { if (!CHUNKS) rej(new Error('viewer_chunks.js 加载超时（15s）')); }, 15000);
+  }).catch(e => { chunksReq = null; throw e; });
+  return chunksReq;
+}
+
+// ---------------------------------------------------------------- 语料信息
+function renderCorpus(){
+  const c = M.corpus;
+  const kpis = [
+    [c.n_companies, '家公司'],
+    [c.n_pages, '页 PDF'],
+    [c.n_chunks, '个块'],
+    [c.n_table_chunks, '表格块'],
+    [c.dim, '维向量'],
+    [M.groups.length, '个语义组'],
+  ];
+  $('kpis').innerHTML = kpis.map(([v, t]) =>
+    `<div class="kpi"><b>${esc(v == null ? '—' : v)}</b><span>${esc(t)}</span></div>`).join('');
+
+  const mi = M.mapInfo || {};
+  $('obs').innerHTML =
+    `实测：<b>公司身份解释了 ${pct(mi.company_evr)} 的嵌入方差</b>，而章节只解释 ${pct(mi.section_evr)}。`
+    + `所以原始向量空间画出来是 <b>${c.n_companies} 个公司孤岛</b>（最近邻同公司率 `
+    + `<b>${pct(mi.n_same_company_1nn)}</b>），不是语义团簇——因为索引文本前拼了`
+    + `「公司 代码 报告期 章节」前缀。切到「语义视角」会先减掉各公司质心，`
+    + `同公司最近邻率降到 <b>${pct(mi.res_same_company_1nn)}</b>，跨公司的主题云才显出来。`;
+
+  $('line1').innerHTML = `嵌入模型 <b>${esc(c.embed_model)}</b>（device ${esc(c.device)}，`
+    + `L2 归一化；query 加指令前缀、document 不加）· 索引构建于 <b>${esc(c.built_at)}</b>`
+    + `（编码 ${esc(Math.round(c.embed_seconds || 0))}s）`;
+  $('line2').innerHTML = `切块约 <b>${esc(c.chunk_tokens)} token</b>（重叠 `
+    + `${esc(Math.round((c.chunk_overlap || 0) * 100))}%，表格整块不切，块不跨章节）`;
+  $('line3').innerHTML = `检索：向量 top${esc(c.top_per_route)} ∪ BM25 top${esc(c.top_per_route)} → `
+    + `RRF(k=${esc(c.rrf_k)}) → top${esc(c.final_top)}`;
+
+  // 公司表不带颜色：颜色在这张图里只表示「语义组」，一家公司没有单一颜色
+  // （块数最多的公司也横跨三个组）。公司身份由位置和质心标签表达。
+  $('coBody').innerHTML = (M.companies || []).map((co, i) => {
+    const secs = (co.sections || []).map(s =>
+      `<span class="s">${esc(s.name)}</span> p${esc(s.start)}–${esc(s.end)}`).join('　·　');
+    return `<tr class="co-row" data-co="${i}">
+        <td>${esc(co.company)}<div class="hint">${esc(co.period || '')}</div></td>
+        <td class="num">${esc(co.code)}</td>
+        <td class="num">${esc(co.pages)}</td>
+        <td class="num">${esc(co.chunks)}</td>
+        <td class="num">${(co.sections || []).length}</td>
+      </tr>
+      <tr class="secs"><td></td><td colspan="4">${secs || '—'}</td></tr>`;
+  }).join('');
+
+  $('coBody').querySelectorAll('tr.co-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const i = +tr.dataset.co;
+      focusCo = (focusCo === i) ? -1 : i;
+      $('coBody').querySelectorAll('tr.co-row').forEach(t =>
+        t.classList.toggle('on', +t.dataset.co === focusCo));
+      draw();
+      if (focusCo >= 0) centerOnCompany(focusCo);
+    });
+  });
+}
+
+// ---------------------------------------------------------------- 地图
+function init(){
+  N = M.corpus.n_chunks;
+  CV = $('map'); CTX = CV.getContext('2d'); WRAP = CV.parentElement; TIP = $('tip');
+  SX = new Float32Array(N); SY = new Float32Array(N);
+
+  $('meta').textContent = `${M.corpus.n_companies} 家公司 · ${M.corpus.n_pages} 页 · `
+    + `${N} 个块 · ${M.corpus.embed_model} (${M.corpus.device})`;
+  $('mapcount').textContent = `${N} 个点 · 降维 PCA(50) → t-SNE(${(M.mapInfo || {}).tsne_metric})`;
+  $('legend').innerHTML = M.groups.map((g, i) =>
+    `<span><i style="background:${esc(g.color)}"></i>${esc(g.name)}`
+    + ` <span class="cnt">${(M.groupCounts || [])[i] == null ? '' : M.groupCounts[i]}</span></span>`).join('');
+
+  renderCorpus();
+  resize();
+
+  if (window.ResizeObserver) new ResizeObserver(() => resize()).observe(WRAP);
+  else window.addEventListener('resize', resize);
+
+  $('vRaw').addEventListener('click', () => setView('raw'));
+  $('vRes').addEventListener('click', () => setView('res'));
+  $('reset').addEventListener('click', () => { focusCo = -1; fit(); draw(); });
+  $('pickClose').addEventListener('click', () => { picked = -1; $('pickCard').style.display = 'none'; draw(); });
+
+  bindMap();
+  setView('raw');
+  renderExamples();
+  bindAsk();
+}
+
+function resize(){
+  DPR = window.devicePixelRatio || 1;
+  W = WRAP.clientWidth;
+  H = CV.clientHeight || 520;          // 高度由 CSS 定（min(56vh, 520px)）
+  CV.width = Math.round(W * DPR);      // 内部分辨率按 DPR 放大，避免高分屏发虚
+  CV.height = Math.round(H * DPR);
+  fit();                               // 尺寸变了就重算适配（会重置当前缩放）
+}
+
+function xy(which){ return which === 'raw' ? M.xyRaw : M.xyRes; }
+
+function fit(){
+  const a = xy(view);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = 0; i < N; i++){
+    const x = a[2 * i], y = a[2 * i + 1];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const bw = Math.max(x1 - x0, 1e-6), bh = Math.max(y1 - y0, 1e-6);
+  const pad = 26;
+  const k = Math.min((W - 2 * pad) / bw, (H - 2 * pad) / bh);
+  cam.k = k; K0 = k;
+  cam.tx = W / 2 - ((x0 + x1) / 2) * k;
+  cam.ty = H / 2 - ((y0 + y1) / 2) * k;
+}
+
+function setView(v){
+  view = (v === 'res') ? 'res' : 'raw';
+  $('vRaw').classList.toggle('on', view === 'raw');
+  $('vRes').classList.toggle('on', view === 'res');
+  fit();
+  const mi = M.mapInfo || {};
+  const same = view === 'raw';
+  $('mapfoot').innerHTML = same
+    ? `<b>召回空间</b>：这是检索真实使用的空间（向量已 L2 归一化，内积即余弦）。`
+      + `本次召回的块只有画在这里才与打分对应。公司身份解释了 ${pct(mi.company_evr)} 的方差，`
+      + `所以 ${M.corpus.n_companies} 家公司各自成群；公司名标在各自的质心处。`
+    : `<b>语义视角</b>：已减掉各公司质心再降维——同公司最近邻率 `
+      + `${pct(mi.n_same_company_1nn)} → <b>${pct(mi.res_same_company_1nn)}</b>，`
+      + `<span class="warn">跨公司的主题云显现出来</span>。这是分析视图，`
+      + `检索并不在这个空间里做，所以召回环与它没有对应关系。`;
+  draw();
+}
+
+function draw(){
+  if (!CTX) return;
+  CTX.setTransform(DPR, 0, 0, DPR, 0, 0);
+  CTX.clearRect(0, 0, W, H);
+  const a = xy(view), k = cam.k, r = Math.max(1.4, Math.min(5.5, 2.2 * Math.sqrt(k / K0)));
+  const focusRows = focusCo >= 0 && M.compRanges ? M.compRanges[focusCo] : null;
+
+  // 屏幕坐标缓存 + 按组批量画（3 次 fill，3007 个点也不卡）
+  const paths = [[], [], []];
+  for (let i = 0; i < N; i++){
+    const sx = a[2 * i] * k + cam.tx, sy = a[2 * i + 1] * k + cam.ty;
+    SX[i] = sx; SY[i] = sy;
+    if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+    paths[M.groupIdx ? M.groupIdx[i] : 0].push(sx, sy);
+  }
+  for (let g = 0; g < paths.length; g++){
+    const p = paths[g];
+    if (!p.length) continue;
+    CTX.beginPath();
+    for (let j = 0; j < p.length; j += 2){
+      CTX.moveTo(p[j] + r, p[j + 1]);
+      CTX.arc(p[j], p[j + 1], r, 0, 6.283185307179586);
+    }
+    if (focusRows){
+      // 高亮某家公司：它的点不透明度拉满，其余压暗
+      CTX.globalAlpha = 0.22; CTX.fillStyle = (M.groups[g] || {}).color || '#999'; CTX.fill();
+      CTX.beginPath();
+      const s = focusRows[0], e = Math.min(s + focusRows[1], N);
+      for (let i = s; i < e; i++){
+        if (M.groupIdx && M.groupIdx[i] !== g) continue;
+        CTX.moveTo(SX[i] + r, SY[i]); CTX.arc(SX[i], SY[i], r, 0, 6.283185307179586);
+      }
+      CTX.globalAlpha = 0.9; CTX.fill();
+      CTX.globalAlpha = 1;
+    } else {
+      CTX.globalAlpha = 0.45; CTX.fillStyle = (M.groups[g] || {}).color || '#999'; CTX.fill();
+      CTX.globalAlpha = 1;
+    }
+  }
+
+  drawCentroids(focusRows);
+  drawHits();
+  drawPick();
+}
+
+function drawCentroids(focusRows){
+  if (!M.compRanges) return;
+  const a = xy(view), k = cam.k;
+  CTX.font = '600 11px -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif';
+  CTX.textAlign = 'center'; CTX.textBaseline = 'middle';
+  M.compRanges.forEach((seg, ci) => {
+    const s = seg[0], e = Math.min(s + seg[1], N);
+    if (e <= s) return;
+    let cx = 0, cy = 0;
+    for (let i = s; i < e; i++){ cx += a[2 * i]; cy += a[2 * i + 1]; }
+    cx = cx / (e - s) * k + cam.tx; cy = cy / (e - s) * k + cam.ty;
+    if (cx < -60 || cx > W + 60 || cy < -20 || cy > H + 20) return;
+    const co = (M.companies || [])[ci] || {};
+    const dim = focusRows && focusRows[0] !== s;
+    CTX.globalAlpha = dim ? 0.28 : 1;
+    CTX.lineWidth = 3; CTX.strokeStyle = '#fff';
+    CTX.strokeText(co.company || '', cx, cy);
+    CTX.fillStyle = dim ? '#6b7280' : '#111318';
+    CTX.fillText(co.company || '', cx, cy);
+    CTX.globalAlpha = 1;
+  });
+}
+
+/* 本次召回的 10 块：主墨色描边环 + 序号直标（是标注，不是第 4 个系列色） */
+function drawHits(){
+  if (!hits.length) return;
+  const a = xy(view), k = cam.k;
+  CTX.font = '700 11px ui-monospace,Menlo,Consolas,monospace';
+  CTX.textAlign = 'left'; CTX.textBaseline = 'alphabetic';
+  const pulse = performance.now() < pulseUntil;
+  const pr = 8 + (pulse && pulseAt >= 0 ? 5 * Math.sin(performance.now() / 90) : 0);
+  hits.forEach(h => {
+    const i = h.global_index;
+    if (i == null || i < 0 || i >= N) return;
+    const sx = a[2 * i] * k + cam.tx, sy = a[2 * i + 1] * k + cam.ty;
+    if (sx < -30 || sx > W + 30 || sy < -30 || sy > H + 30) return;
+    CTX.beginPath();
+    CTX.arc(sx, sy, i === pulseAt ? pr : 7, 0, 6.283185307179586);
+    CTX.lineWidth = 2; CTX.strokeStyle = '#0b0b0b'; CTX.stroke();
+    CTX.lineWidth = 3; CTX.strokeStyle = '#fff';
+    CTX.strokeText('#' + h.rank, sx + 9, sy - 8);
+    CTX.fillStyle = '#0b0b0b';
+    CTX.fillText('#' + h.rank, sx + 9, sy - 8);
+  });
+}
+
+function drawPick(){
+  if (picked < 0) return;
+  const a = xy(view), k = cam.k;
+  const sx = a[2 * picked] * k + cam.tx, sy = a[2 * picked + 1] * k + cam.ty;
+  CTX.beginPath(); CTX.arc(sx, sy, 10, 0, 6.283185307179586);
+  CTX.lineWidth = 2; CTX.strokeStyle = '#111318'; CTX.stroke();
+  CTX.beginPath(); CTX.arc(sx, sy, 4, 0, 6.283185307179586);
+  CTX.fillStyle = '#111318'; CTX.fill();
+}
+
+function centerOnCompany(ci){
+  const seg = M.compRanges[ci], a = xy(view);
+  const s = seg[0], e = Math.min(s + seg[1], N);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (let i = s; i < e; i++){
+    const x = a[2 * i], y = a[2 * i + 1];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const pad = 40;
+  const k = Math.min((W - 2 * pad) / Math.max(x1 - x0, 1e-6),
+                     (H - 2 * pad) / Math.max(y1 - y0, 1e-6));
+  // 不改 K0：它是「初始适配尺度」，点的半径与缩放上下限都以它为基准。
+  // 若在这里把 K0 提上来，等于把当前的放大倍率当成新基准，点会缩回原尺寸。
+  cam.k = Math.max(k, K0);
+  cam.tx = W / 2 - ((x0 + x1) / 2) * cam.k;
+  cam.ty = H / 2 - ((y0 + y1) / 2) * cam.k;
+  draw();
+}
+
+function centerOnPoint(i, zoom){
+  const a = xy(view);
+  cam.k = Math.max(K0 * (zoom || 2.2), cam.k);
+  cam.tx = W / 2 - a[2 * i] * cam.k;
+  cam.ty = H / 2 - a[2 * i + 1] * cam.k;
+}
+
+function bindMap(){
+  let dragging = false, moved = 0, lx = 0, ly = 0;
+
+  CV.addEventListener('mousemove', e => {
+    const rc = CV.getBoundingClientRect();
+    const mx = e.clientX - rc.left, my = e.clientY - rc.top;
+    if (dragging){
+      cam.tx += mx - lx; cam.ty += my - ly;
+      moved += Math.abs(mx - lx) + Math.abs(my - ly);
+      lx = mx; ly = my; draw(); return;
+    }
+    const i = pickAt(mx, my);
+    if (i < 0){ TIP.style.display = 'none'; CV.style.cursor = 'crosshair'; return; }
+    CV.style.cursor = 'pointer';
+    TIP.style.display = 'block';
+    TIP.innerHTML = `<b>${esc((M.companies[companyOf(i)] || {}).company || '')}</b> `
+      + `<span class="m">${esc(sectionOf(i))} · ${esc(pagesOf(i))}`
+      + `${M.hasTable[i] ? ' · 表格' : ''}</span><br>${esc(snippetOf(i))}`;
+    const tw = TIP.offsetWidth, th = TIP.offsetHeight;
+    TIP.style.left = Math.min(Math.max(mx + 12, 4), Math.max(W - tw - 4, 4)) + 'px';
+    TIP.style.top = Math.max(my - th - 10, 4) + 'px';
+  });
+
+  CV.addEventListener('mouseleave', () => { TIP.style.display = 'none'; dragging = false; });
+
+  CV.addEventListener('mousedown', e => {
+    dragging = true; moved = 0;
+    const rc = CV.getBoundingClientRect();
+    lx = e.clientX - rc.left; ly = e.clientY - rc.top;
+    CV.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mouseup', () => { if (dragging){ dragging = false; CV.style.cursor = 'crosshair'; } });
+
+  CV.addEventListener('click', e => {
+    if (moved > 4) return;                       // 拖拽结束的那一下不算点击
+    const rc = CV.getBoundingClientRect();
+    const i = pickAt(e.clientX - rc.left, e.clientY - rc.top);
+    if (i < 0) return;
+    picked = i;
+    $('pickCard').style.display = '';
+    renderPick(i);
+    draw();
+  });
+
+  CV.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rc = CV.getBoundingClientRect();
+    const mx = e.clientX - rc.left, my = e.clientY - rc.top;
+    const f = Math.exp(-e.deltaY * 0.0016);
+    const k2 = Math.min(Math.max(cam.k * f, K0 * 0.35), K0 * 90);
+    const s = k2 / cam.k;
+    cam.tx = mx - (mx - cam.tx) * s;             // 光标锚定缩放
+    cam.ty = my - (my - cam.ty) * s;
+    cam.k = k2;
+    draw();
+  }, {passive: false});
+}
+
+function pickAt(mx, my){
+  let best = -1, bd = 64;                        // 8px 以内算命中
+  for (let i = 0; i < N; i++){
+    const dx = SX[i] - mx, dy = SY[i] - my, d = dx * dx + dy * dy;
+    if (d < bd){ bd = d; best = i; }
+  }
+  return best;
+}
+
+function pulse(i){
+  pulseAt = i; pulseUntil = performance.now() + 1400;
+  const tick = () => { draw(); if (performance.now() < pulseUntil) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
+
+function renderPick(i){
+  $('pickBody').innerHTML =
+    `<div class="co" style="font-weight:650">${esc((M.companies[companyOf(i)] || {}).company || '')}`
+    + ` <span class="cd" style="font-family:var(--mono);font-size:11px;color:var(--muted)">`
+    + `${esc(citationOf(i))}</span></div>`
+    + `<div class="hint" style="margin:4px 0 8px">第 ${i} 号块`
+    + `${M.hasTable[i] ? ' · 表格块' : ''} · ${esc(sectionOf(i))} · ${esc(pagesOf(i))}</div>`
+    + `<div id="pickText" class="ex" style="display:block">加载原文…</div>`;
+  loadChunks().then(C => {
+    const t = C[i] ? C[i][0] : '';
+    $('pickText').textContent = t || '（空块）';
+  }).catch(err => {
+    $('pickText').innerHTML = `<span style="color:#b91c1c">原文加载失败：${esc(err.message)}</span>`;
+  });
+}
+
+// ---------------------------------------------------------------- 问答
+const CITE_RE = /\[([^\[\]\n]{1,60}·[^\[\]\n]{1,60}·[^\[\]\n]{1,80}·p\d+(?:-\d+)?)\]/g;
+
+const EXAMPLES = [
+  '寒武纪2026年上半年营业收入是多少？比上年同期增长多少？',
+  '中芯国际上半年毛利率是多少？比上年同期变化多少？',
+  '这14家公司里，营业收入同比增速最高的是哪一家？',
+  '拓荆科技上半年归母净利润同比增长多少？',
+];
+
+function renderExamples(){
+  $('ex').innerHTML = EXAMPLES.map(q =>
+    `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('');
+  $('ex').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    $('q').value = b.dataset.q; $('q').focus();
+  }));
+}
+
+function mdLite(s){
+  const lines = esc(s).split('\n');
+  let out = [], list = null;
+  const closeList = () => { if (list){ out.push(list === 'ul' ? '</ul>' : '</ol>'); list = null; } };
+  for (const ln of lines){
+    let m;
+    if ((m = /^#{3,4}\s+(.*)$/.exec(ln))){ closeList(); out.push('<h4>' + m[1] + '</h4>'); continue; }
+    if ((m = /^\s*[-*]\s+(.*)$/.exec(ln))){
+      if (list !== 'ul'){ closeList(); out.push('<ul>'); list = 'ul'; }
+      out.push('<li>' + m[1] + '</li>'); continue;
+    }
+    if ((m = /^\s*\d+[.、]\s+(.*)$/.exec(ln))){
+      if (list !== 'ol'){ closeList(); out.push('<ol>'); list = 'ol'; }
+      out.push('<li>' + m[1] + '</li>'); continue;
+    }
+    closeList();
+    if (ln.trim() === '') continue;
+    out.push('<p>' + ln + '</p>');
+  }
+  closeList();
+  return out.join('').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+
+function renderAnswer(text, cursor){
+  let html = '', last = 0, m;
+  CITE_RE.lastIndex = 0;
+  while ((m = CITE_RE.exec(text)) !== null){
+    html += mdLite(text.slice(last, m.index));
+    html += `<span class="cite" data-cite="${esc(m[1])}">[${esc(m[1])}]</span>`;
+    last = m.index + m[0].length;
+  }
+  html += mdLite(text.slice(last));
+  return html + (cursor ? '<span class="caret"></span>' : '');
+}
+
+function renderHits(list){
+  hits = list || [];
+  $('hitsrc').textContent = hits.length ? hits.length + ' 块（已在地图上圈出）' : '';
+  const box = $('hits');
+  if (!hits.length){ box.innerHTML = '<div class="empty">无召回结果</div>'; return; }
+  box.innerHTML = hits.map((h, k) => `
+    <div class="hit" data-cite="${esc(h.citation)}" data-k="${k}">
+      <div class="r1">
+        <span class="badge">#${h.rank}</span>
+        ${h.has_table ? '<span class="badge t">表格</span>' : ''}
+        <span class="co">${esc(h.company)}</span>
+        <span class="cd">${esc(h.code)}</span>
+      </div>
+      <div class="sec">${esc(h.section)}</div>
+      <div class="pg">${esc(h.period)} · ${esc(h.pages)}</div>
+      <div class="scores">
+        <span class="sc r">RRF ${h.rrf_score}</span>
+        <span class="sc v">向量 ${h.vec_score == null ? '—' : h.vec_score}${h.vec_rank ? ' #' + h.vec_rank : ''}</span>
+        <span class="sc b">BM25 ${h.bm25_score == null ? '—' : h.bm25_score}${h.bm25_rank ? ' #' + h.bm25_rank : ''}</span>
+      </div>
+      <div class="acts">
+        <button type="button" data-act="toggle">展开原文</button>
+        <button type="button" data-act="locate"${h.global_index == null ? ' disabled' : ''}>在地图上定位</button>
+        <button type="button" data-act="copy">复制引用</button>
+      </div>
+      <div class="ex">${esc(h.text)}</div>
+    </div>`).join('');
+
+  box.querySelectorAll('.hit').forEach(el => {
+    const k = +el.dataset.k, h = hits[k];
+    el.querySelectorAll('button[data-act]').forEach(b => {
+      b.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const act = b.dataset.act;
+        if (act === 'toggle'){
+          const on = el.classList.toggle('on');
+          b.textContent = on ? '收起原文' : '展开原文';
+        } else if (act === 'locate'){
+          locateHit(k);
+        } else if (act === 'copy'){
+          const txt = '[' + h.citation + ']';
+          if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => {});
+          b.textContent = '已复制';
+          setTimeout(() => { b.textContent = '复制引用'; }, 1200);
+        }
+      });
+    });
+    el.addEventListener('click', () => {
+      const on = el.classList.toggle('on');
+      const b = el.querySelector('button[data-act="toggle"]');
+      if (b) b.textContent = on ? '收起原文' : '展开原文';
+    });
+  });
+}
+
+function locateHit(k){
+  const h = hits[k];
+  if (!h || h.global_index == null) return;
+  if (view !== 'raw'){
+    // 召回高亮只在召回空间里与打分对应，定位时自动切回去
+    setView('raw');
+  }
+  centerOnPoint(h.global_index, 2.4);
+  draw();
+  pulse(h.global_index);
+  focusOnCite(h.citation);
+}
+
+function focusOnCite(cite){
+  const box = $('hits');
+  box.querySelectorAll('.hit.on').forEach(e => e.classList.remove('on'));
+  box.querySelectorAll('.hit').forEach(e => {
+    if (e.dataset.cite === cite){
+      e.classList.add('on');
+      const b = e.querySelector('button[data-act="toggle"]');
+      if (b) b.textContent = '收起原文';
+      e.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    }
+  });
+  document.querySelectorAll('#answer .cite').forEach(c =>
+    c.classList.toggle('on', c.dataset.cite === cite));
+}
+
+$('answer').addEventListener('click', e => {
+  const c = e.target.closest('.cite');
+  if (c) focusOnCite(c.dataset.cite);
+});
+
+function bindAsk(){
+  const form = $('f'), qEl = $('q'), btn = $('btn'), ans = $('answer');
+
+  // file:// 打开时先说清前提：提问要本地服务在跑
+  if (location.protocol === 'file:'){
+    $('qsrc').innerHTML = `提问走本地服务 <code>${esc(M.apiBase)}</code>`;
+  } else {
+    $('qsrc').textContent = '检索在本机进行，密钥不下发浏览器';
+  }
+
+  qEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); form.requestSubmit(); }
+  });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const q = qEl.value.trim();
+    if (!q || btn.disabled) return;
+    qEl.value = '';
+    btn.disabled = true; btn.textContent = '检索中…';
+
+    ans.innerHTML = `<div class="who"><span class="tag">问</span><span class="t">${esc(q)}</span></div>`
+      + `<div class="who"><span class="tag">答</span></div>`
+      + `<div id="abody"><span class="caret"></span></div>`;
+    const bodyEl = $('abody');
+
+    let text = '', pending = false;
+    const paint = () => { pending = false; bodyEl.innerHTML = renderAnswer(text, true); };
+    const schedule = () => { if (!pending){ pending = true; requestAnimationFrame(paint); } };
+
+    try {
+      const res = await fetch(M.apiBase + '/api/ask', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({question: q}),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()).slice(0, 200));
+
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      while (true){
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, {stream: true});
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0){
+          const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+          const ev = (/^event:\s*(.+)$/m.exec(raw) || [])[1];
+          const dm = /^data:\s*(.+)$/m.exec(raw);
+          if (!dm) continue;
+          const data = JSON.parse(dm[1]);
+          if (ev === 'retrieval'){
+            renderHits(data.hits);
+            if (view === 'raw'){
+              // 把镜头挪到本次召回的 10 块上，省得用户自己找
+              const g = data.hits.map(h => h.global_index).filter(v => v != null);
+              if (g.length) framePoints(g);
+            }
+            btn.textContent = '生成中…';
+          } else if (ev === 'delta'){
+            text += data.text; schedule();
+          } else if (ev === 'error'){
+            bodyEl.innerHTML = `<div class="err">生成失败：${esc(data.message)}</div>`;
+          }
+        }
+      }
+      bodyEl.innerHTML = renderAnswer(text, false);
+    } catch (err){
+      // fetch 抛 TypeError = 连接层就失败了（服务没起 / 被 CORS 或 Chrome 本地网络访问拦）
+      if (err instanceof TypeError) bodyEl.innerHTML = offlineHelp();
+      else bodyEl.innerHTML = `<div class="err">请求失败：${esc(String(err.message || err))}</div>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '提问'; qEl.focus();
+    }
+  });
+}
+
+function framePoints(idxs){
+  const a = xy(view);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  idxs.forEach(i => {
+    const x = a[2 * i], y = a[2 * i + 1];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  });
+  const pad = 60;
+  const k = Math.min((W - 2 * pad) / Math.max(x1 - x0, 40), (H - 2 * pad) / Math.max(y1 - y0, 40));
+  cam.k = Math.min(Math.max(k, K0), K0 * 6);
+  cam.tx = W / 2 - ((x0 + x1) / 2) * cam.k;
+  cam.ty = H / 2 - ((y0 + y1) / 2) * cam.k;
+  draw();
+}
+
+function offlineHelp(){
+  const url = M.apiBase + '/visual.html';
+  return `<div class="help"><b>连不上本地服务。</b><br>`
+    + `本页是双击打开的（<code>file://</code>），提问要由本机的 RAG 服务来跑；`
+    + `检索与 DeepSeek 调用都在服务端，密钥不下发浏览器。<br><br>`
+    + `① 在本项目目录运行 <code>start.bat</code>（或 <code>python serve.py</code>），`
+    + `等它打印「就绪」；<br>`
+    + `② 打开 <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>。`
+    + `用这个地址提问最稳妥——同一页面走同源，不受跨域限制。<br><br>`
+    + `<span class="hint">地图与语料信息不需要服务，双击即可看；只有提问依赖它。</span>`
+    + `</div>`;
+}
+
+// ---------------------------------------------------------------- 启动
+// 放在脚本末尾：上面那批 var 的赋值要等执行到这里才生效，而 init() 会写这些变量。
+// 早于它们调用 init() 会被随后的 var 赋值当场重置（var N = 0 会把 N 清零）。
+(function(){
+  if (!M){
+    document.getElementById('meta').textContent = '找不到 viewer_meta.js';
+    document.getElementById('mapfoot').innerHTML =
+      '<span class="warn">可视化数据未生成。</span> 先在本项目目录运行 '
+      + '<code>python build_viewer.py</code>，再刷新本页。';
+    return;
+  }
+  init();
+})();
+</script>
+</body>
+</html>

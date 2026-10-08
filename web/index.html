@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A股半年报 RAG 问答</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --line:#e3e6ea; --text:#1a1d21; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#eff4ff; --ok:#059669; --warn:#b45309;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;}
+  header{position:sticky;top:0;z-index:20;background:var(--card);border-bottom:1px solid var(--line);
+    padding:12px 20px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px;font-weight:650;letter-spacing:.2px}
+  header .meta{color:var(--muted);font-size:12.5px}
+  header .rule{margin-left:auto;color:var(--muted);font-size:12px;font-family:var(--mono)}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;
+    max-width:1480px;margin:0 auto;padding:16px 20px 40px;align-items:start}
+  @media (max-width:1080px){main{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+  .chat{display:flex;flex-direction:column;min-height:70vh}
+  #thread{padding:8px 20px 4px;flex:1;min-height:40vh}
+  .empty{color:var(--muted);text-align:center;padding:56px 20px;font-size:14px}
+  .empty code{font-family:var(--mono);background:var(--accent-soft);color:var(--accent);
+    padding:2px 6px;border-radius:4px}
+  .q{display:flex;gap:10px;margin:18px 0 10px}
+  .q .who{flex:0 0 auto;font-size:12px;font-weight:600;color:#fff;background:var(--accent);
+    border-radius:6px;padding:3px 8px;height:fit-content;margin-top:2px}
+  .q .txt{font-weight:600}
+  .a{margin:6px 0 26px;padding-left:0}
+  .a .who{font-size:12px;font-weight:600;color:var(--accent);margin-bottom:6px}
+  .a .body{white-space:pre-wrap;word-break:break-word}
+  .a .body p{margin:.45em 0}
+  .a .body ul,.a .body ol{margin:.45em 0;padding-left:1.5em}
+  .a .body strong{font-weight:650}
+  .a .body h4{margin:.7em 0 .3em;font-size:14.5px;color:var(--accent)}
+  .cite{display:inline;font-family:var(--mono);font-size:11.5px;color:var(--accent);
+    background:var(--accent-soft);border:1px solid #d5e2ff;border-radius:4px;
+    padding:1px 5px;margin:0 2px;cursor:pointer;white-space:nowrap;vertical-align:1px}
+  .cite:hover{background:#dfeaff;border-color:#b9cfff}
+  .cite.on{background:#dbeafe;border-color:var(--accent);box-shadow:0 0 0 2px #c7dbff}
+  .caret:after{content:"▍";color:var(--accent);animation:bl 1s steps(2) infinite}
+  @keyframes bl{50%{opacity:0}}
+  form.ask{border-top:1px solid var(--line);padding:12px 20px;display:flex;gap:10px;align-items:flex-end}
+  textarea{flex:1;resize:vertical;min-height:52px;max-height:180px;padding:11px 12px;font:inherit;
+    border:1px solid var(--line);border-radius:8px;outline:none;background:#fbfcfd}
+  textarea:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px #e6efff}
+  button{border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:600;
+    padding:11px 22px;cursor:pointer}
+  button:disabled{background:#9db8ea;cursor:not-allowed}
+  aside{position:sticky;top:64px}
+  aside h2{font-size:13px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-weight:600}
+  #hits{padding:10px 12px;display:flex;flex-direction:column;gap:9px;max-height:calc(100vh - 130px);overflow:auto}
+  .hit{border:1px solid var(--line);border-radius:8px;padding:9px 11px;cursor:pointer;background:#fcfdfe;
+    transition:border-color .12s,background .12s}
+  .hit:hover{border-color:#c8d4e8}
+  .hit.on{border-color:var(--accent);background:var(--accent-soft);box-shadow:0 0 0 2px #dbe8ff}
+  .hit .r1{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .badge{font-size:10.5px;font-weight:700;color:#fff;background:var(--accent);border-radius:4px;padding:1px 6px}
+  .badge.t{background:var(--warn)}
+  .hit .co{font-weight:650;font-size:13.5px}
+  .hit .cd{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .hit .sec{font-size:12px;color:#374151;margin-top:3px}
+  .hit .pg{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+  .scores{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+  .sc{font-family:var(--mono);font-size:10.5px;border-radius:4px;padding:1px 5px;
+    background:#f1f3f6;color:#4b5563}
+  .sc.v{background:#eef6ff;color:#1d4ed8}
+  .sc.b{background:#fef6ec;color:#9a5b0b}
+  .sc.r{background:#eefaf3;color:#047857}
+  .ex{display:none;margin-top:8px;border-top:1px dashed var(--line);padding-top:8px;
+    font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre-wrap;
+    max-height:340px;overflow:auto;color:#374151;background:#fafbfc;border-radius:6px;padding:8px}
+  .hit.on .ex{display:block}
+  .err{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;font-size:13.5px}
+  .foot{color:var(--muted);font-size:12px;padding:0 20px 18px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>A股半年报 RAG 问答</h1>
+  <div class="meta" id="meta">加载中…</div>
+  <div class="rule">
+    <a href="./visual.html" style="color:var(--accent);text-decoration:none">语义地图与语料信息 →</a>
+    <span style="color:var(--muted)">　向量 top20 ∪ BM25 top20 → RRF(k=60) → top10</span>
+  </div>
+</header>
+
+<main>
+  <section class="card chat">
+    <div id="thread">
+      <div class="empty">
+        向 14 家 AI 产业链公司的 2026 年半年度报告提问。<br><br>
+        例如：<code>寒武纪本报告期营业收入是多少？同比增长多少？</code><br>
+        <code>哪家公司的销售毛利率最高？</code>
+      </div>
+    </div>
+    <form class="ask" id="f">
+      <textarea id="q" placeholder="输入问题，Enter 发送（Shift+Enter 换行）"></textarea>
+      <button id="btn" type="submit">提问</button>
+    </form>
+  </section>
+
+  <aside class="card">
+    <h2><span>本次召回 Top10</span><span id="hitsrc"></span></h2>
+    <div id="hits"><div class="empty" style="padding:28px 8px">提问后在此显示</div></div>
+  </aside>
+</main>
+
+<div class="foot">
+  页码为 PDF 物理页码（封面起算），与报告印刷页码可能存在偏移。
+</div>
+
+<script>
+const CITE_RE = /\[([^\[\]\n]{1,60}·[^\[\]\n]{1,60}·[^\[\]\n]{1,80}·p\d+(?:-\d+)?)\]/g;
+let HITS = [], LAST_FULL = [];
+
+fetch('/api/meta').then(r => r.json()).then(m => {
+  document.getElementById('meta').textContent =
+    `${(m.companies||[]).length || 14} 家公司 · ${m.n_pages} 页 · ${m.n_chunks} 个块` +
+    ` · 嵌入 ${m.embed_model ? m.embed_model.split(/[\\/]/).pop() : ''} (${m.device})`;
+}).catch(()=>{});
+
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function mdLite(s){
+  const lines = esc(s).split('\n');
+  let out = [], list = null;
+  const closeList = () => { if(list){ out.push(list === 'ul' ? '</ul>' : '</ol>'); list = null; } };
+  for (const ln of lines){
+    let m;
+    if ((m = /^#{3,4}\s+(.*)$/.exec(ln))){ closeList(); out.push('<h4>' + m[1] + '</h4>'); continue; }
+    if ((m = /^\s*[-*]\s+(.*)$/.exec(ln))){
+      if (list !== 'ul'){ closeList(); out.push('<ul>'); list = 'ul'; }
+      out.push('<li>' + m[1] + '</li>'); continue;
+    }
+    if ((m = /^\s*\d+[.、]\s+(.*)$/.exec(ln))){
+      if (list !== 'ol'){ closeList(); out.push('<ol>'); list = 'ol'; }
+      out.push('<li>' + m[1] + '</li>'); continue;
+    }
+    closeList();
+    if (ln.trim() === '') continue;
+    out.push('<p>' + ln + '</p>');
+  }
+  closeList();
+  return out.join('').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+
+function renderAnswer(text, cursor){
+  let html = '', last = 0, m;
+  CITE_RE.lastIndex = 0;
+  while ((m = CITE_RE.exec(text)) !== null){
+    html += mdLite(text.slice(last, m.index));
+    html += `<span class="cite" data-cite="${esc(m[1])}">[${esc(m[1])}]</span>`;
+    last = m.index + m[0].length;
+  }
+  html += mdLite(text.slice(last));
+  return html + (cursor ? '<span class="caret"></span>' : '');
+}
+
+function renderHits(hits){
+  HITS = hits; LAST_FULL = hits.map(h => h.text);
+  document.getElementById('hitsrc').textContent = hits.length ? hits.length + ' 块' : '';
+  const box = document.getElementById('hits');
+  if (!hits.length){ box.innerHTML = '<div class="empty">无召回结果</div>'; return; }
+  box.innerHTML = hits.map(h => `
+    <div class="hit" data-cite="${esc(h.citation)}" data-i="${h.rank - 1}">
+      <div class="r1">
+        <span class="badge">#${h.rank}</span>
+        ${h.has_table ? '<span class="badge t">表格</span>' : ''}
+        <span class="co">${esc(h.company)}</span>
+        <span class="cd">${esc(h.code)}</span>
+      </div>
+      <div class="sec">${esc(h.section)}</div>
+      <div class="pg">${esc(h.period)} · ${esc(h.pages)} · ${esc(h.chunk_id.split('_').pop())}</div>
+      <div class="scores">
+        <span class="sc r">RRF ${h.rrf_score}</span>
+        <span class="sc v">向量 ${h.vec_score === null ? '—' : h.vec_score}${h.vec_rank ? ' #' + h.vec_rank : ''}</span>
+        <span class="sc b">BM25 ${h.bm25_score === null ? '—' : h.bm25_score}${h.bm25_rank ? ' #' + h.bm25_rank : ''}</span>
+      </div>
+      <div class="ex">${esc(h.text)}</div>
+    </div>`).join('');
+  box.querySelectorAll('.hit').forEach(el => {
+    el.addEventListener('click', ev => {
+      if (ev.target.closest('.ex')) return;
+      el.classList.toggle('on');
+    });
+  });
+}
+
+function focusHit(cite){
+  const el = document.querySelector(`.hit[data-cite="${CSS.escape(cite)}"]`);
+  document.querySelectorAll('.cite.on').forEach(c => c.classList.remove('on'));
+  document.querySelectorAll(`.cite[data-cite="${CSS.escape(cite)}"]`).forEach(c => c.classList.add('on'));
+  if (!el) return;
+  el.classList.add('on');
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+document.getElementById('thread').addEventListener('click', e => {
+  const c = e.target.closest('.cite');
+  if (c) focusHit(c.dataset.cite);
+});
+
+const form = document.getElementById('f'), qEl = document.getElementById('q'),
+      btn = document.getElementById('btn'), thread = document.getElementById('thread');
+
+qEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); form.requestSubmit(); }
+});
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = qEl.value.trim();
+  if (!q || btn.disabled) return;
+  qEl.value = '';
+  btn.disabled = true; btn.textContent = '检索中…';
+
+  if (thread.querySelector('.empty')) thread.innerHTML = '';
+  const qDiv = document.createElement('div');
+  qDiv.className = 'q';
+  qDiv.innerHTML = `<span class="who">问</span><span class="txt">${esc(q)}</span>`;
+  thread.appendChild(qDiv);
+
+  const aDiv = document.createElement('div');
+  aDiv.className = 'a';
+  aDiv.innerHTML = '<div class="who">答</div><div class="body"><span class="caret"></span></div>';
+  thread.appendChild(aDiv);
+  const bodyEl = aDiv.querySelector('.body');
+  aDiv.scrollIntoView({behavior:'smooth', block:'start'});
+
+  let answer = '', pending = false;
+  const paint = () => {
+    pending = false;
+    bodyEl.innerHTML = renderAnswer(answer, true);
+    aDiv.scrollIntoView({behavior:'auto', block:'nearest'});
+  };
+  const schedule = () => { if (!pending){ pending = true; requestAnimationFrame(paint); } };
+
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: q})
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + (await res.text()).slice(0, 200));
+
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    while (true){
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream: true});
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0){
+        const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+        const ev = (/^event:\s*(.+)$/m.exec(raw) || [])[1];
+        const dm = /^data:\s*(.+)$/m.exec(raw);
+        if (!dm) continue;
+        const data = JSON.parse(dm[1]);
+        if (ev === 'retrieval'){
+          renderHits(data.hits);
+          btn.textContent = '生成中…';
+        } else if (ev === 'delta'){
+          answer += data.text; schedule();
+        } else if (ev === 'error'){
+          bodyEl.innerHTML = `<div class="err">生成失败：${esc(data.message)}</div>`;
+        }
+      }
+    }
+    bodyEl.innerHTML = renderAnswer(answer, false);
+  } catch (err){
+    bodyEl.innerHTML = `<div class="err">请求失败：${esc(String(err.message || err))}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '提问'; qEl.focus();
+  }
+});
+</script>
+</body>
+</html>

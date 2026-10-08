@@ -1,0 +1,32 @@
+# ---- 环境与编辑器 ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+.vscode/
+.DS_Store
+
+# ---- 语料 PDF（26MB）----
+# 老师给的原始资料，本仓库不重复托管；重新拿到 PDF 后跑 build_index.py 即可重建索引。
+*.pdf
+
+# ---- 建索引的产物（可重建）----
+# python build_index.py   → 约 55s 解析（8 进程）+ 14min GPU 编码
+data/chunks.jsonl
+data/pages.jsonl
+data/index/emb.npy
+data/index/emb.partial.npy
+data/index/bm25.pkl
+# 注意：data/index/manifest.json 与 data/companies.json 只有几十 KB，**保留**——
+# 它们是这套索引的构建证据（块数、维度、device、融合超参、逐公司页数块数）。
+
+# ---- 可视化产物（可重建）----
+# python build_viewer.py  → 约 30s（两次 t-SNE）
+web/viewer_meta.js
+web/viewer_chunks.js
+
+# ---- 本地临时文件（我调试时用的下划线前缀）----
+_*.log
+_*.json
+_*.out
